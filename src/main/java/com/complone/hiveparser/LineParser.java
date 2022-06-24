@@ -1,6 +1,7 @@
 package com.complone.hiveparser;
 
 import com.complone.hiveparser.common.Operation;
+import com.complone.hiveparser.conf.DatabaseConfInfo;
 import com.complone.hiveparser.dao.MetaDataQuery;
 import com.complone.hiveparser.entity.ColLine;
 import com.complone.hiveparser.entity.ColLineParse;
@@ -59,11 +60,11 @@ public class LineParser {
     private String nowQueryTable;
     private boolean isStaticUnion;
     
-    private Class<? extends DataSource> dataSource;
-    private String databaseType;
+    private DataSource dataSource;
+    private DatabaseConfInfo databaseConfInfo;
     
     
-    public LineParser(DataSource dataSource, String databaseType){
+    public LineParser(DataSource dataSource, DatabaseConfInfo databaseType){
         operation = Operation.DEFAULT;
         subQueryMap = new HashMap<String,  List<ColLineParse>>();
         dbMap = new HashMap<String, List<String>>();
@@ -74,8 +75,8 @@ public class LineParser {
         unionTimes = 0;
         alias = new HashMap<String, String>();
         isStaticUnion = true;
-        dataSource = dataSource;
-        databaseType = databaseType;
+        this.dataSource = dataSource;
+        this.databaseConfInfo = databaseType;
     }
     
     
@@ -111,7 +112,7 @@ public class LineParser {
         for (String table : outputTables) {
             String sql = table.replaceAll("[\\s\\t\\n\\r]", "").trim().toUpperCase();
             String[] pdt = sql.split(".");
-            List<String> list = dao.getColumnByDBAndTable(dataSource, databaseType, pdt[0], pdt[1]);
+            List<String> list = dao.getColumnByDBAndTable(dataSource, databaseConfInfo, pdt[0], pdt[1]);
             dbMap.put(table, list);
         }
     }
@@ -119,17 +120,19 @@ public class LineParser {
     private void setColLineList() {
         Map<String, List<ColLineParse>> map = new HashMap<String, List<ColLineParse>>();
         for (Map.Entry<String, List<ColLineParse>> entry : subQueryMap.entrySet()) {
-            if (entry.getKey().startsWith(TOK_EOF)) {
-                List<ColLineParse> value = entry.getValue();
-                for (ColLineParse colLineParse : value) {
-                    List<ColLineParse> list = map.get(colLineParse.getToTable());
-                    if (CollectionUtils.isEmpty(list)) {
-                        list = new ArrayList<ColLineParse>();
-                        map.put(colLineParse.getToTable(), list);
-                    }
-                    list.add(colLineParse);
-                }
+            if (!entry.getKey().startsWith(TOK_EOF)) {
+                continue;
             }
+            List<ColLineParse> value = entry.getValue();
+            for (ColLineParse colLineParse : value) {
+                List<ColLineParse> list = map.get(colLineParse.getToTable());
+                if (CollectionUtils.isEmpty(list)) {
+                    list = new ArrayList<ColLineParse>();
+                    map.put(colLineParse.getToTable(), list);
+                }
+                list.add(colLineParse);
+            }
+            
         }
         
         for (Map.Entry<String, List<ColLineParse>> entry : map.entrySet()) {
@@ -408,7 +411,7 @@ public class LineParser {
                             }
                             String db = split.length == 2 ? split[0] : "" ;
                             String table = split.length == 2 ? split[1] : split[0] ;
-                            List<String> colByTab = dao.getColumnByDBAndTable(dataSource, databaseType, db, table);
+                            List<String> colByTab = dao.getColumnByDBAndTable(dataSource, databaseConfInfo, db, table);
                             for (String column : colByTab) {
                                 cols.add(new ColLineParse(destTable, column, tables + SPLIT_DOT + column, new HashSet<String>()));
                             }
@@ -416,7 +419,7 @@ public class LineParser {
                         break;
                     }
         
-                    //select c1 from t的情况
+                    //1，select c1 from t的情况
                     String columnOrData = filterData(getColOrData((ASTNode)ast.getChild(0), false, false));
                     //2、过滤条件的处理select类
                     String condition = getCondition((ASTNode)ast.getChild(0));
@@ -425,7 +428,8 @@ public class LineParser {
                         : parseColOrData((ASTNode)ast.getChild(0), true); //别名
                     cols.add(new ColLineParse(destTable, column, columnOrData, clone));
                     break;
-                case HiveParser.TOK_WHERE: //3、过滤条件的处理select类
+                case HiveParser.TOK_WHERE:
+                    //3、过滤条件的处理select类
                     conditions.add("WHERE:" + getCondition((ASTNode) ast.getChild(0)));
                     break;
                 case HiveParser.TOK_ALTERTABLE_ADDPARTS:
@@ -787,14 +791,17 @@ public class LineParser {
         return colLineList;
     }
     
-    public static void main(String[] args) throws SQLException {
-        DataSource dataSource = new HikariDataSource();
-        String databaseType = "MySQL";
-        LineParser lineParser = new LineParser(dataSource, databaseType);
-        lineParser.parse("INSERT OVERWRITE TABLE dest1 partition (ds = '111')  "
-            + "SELECT s.* FROM srcpart TABLESAMPLE (BUCKET 1 OUT OF 1) s "
-            + "WHERE s.ds='2008-04-08' and s.hr='11'",true);
-        System.out.println(lineParser.getColLines());
-    }
+//    public static void main(String[] args) throws SQLException {
+//        DataSource dataSource = new HikariDataSource();
+//        DatabaseConfInfo databaseConfInfo = new DatabaseConfInfo();
+//        databaseConfInfo.setSrcDataSource("ds1");
+//        databaseConfInfo.setDatabaseType("MySQL");
+//        databaseConfInfo.setDestDataSource("ds2");
+//        LineParser lineParser = new LineParser(dataSource, databaseConfInfo);
+//        lineParser.parse("INSERT OVERWRITE TABLE dest1 partition (ds = '111')  "
+//            + "SELECT s.* FROM srcpart TABLESAMPLE (BUCKET 1 OUT OF 1) s "
+//            + "WHERE s.ds='2008-04-08' and s.hr='11'",true);
+//        System.out.println(lineParser.getColLines());
+//    }
     
 }

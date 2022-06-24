@@ -1,50 +1,122 @@
 package com.complone.hiveparser.utils;
 
 import com.alibaba.druid.pool.DruidDataSource;
+import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
+import com.complone.hiveparser.conf.DatabaseConfInfo;
+import com.complone.hiveparser.conf.DruidDataSourceManager;
+import com.complone.hiveparser.conf.HikariDataSourceManager;
+import com.complone.hiveparser.conf.UserConfiguarion;
+import com.complone.hiveparser.conf.druid.DruidDataConfig;
+import com.complone.hiveparser.conf.hikari.HikariDataConfig;
+import com.complone.hiveparser.datasource.AbstractRoutingDataSource;
+import com.complone.hiveparser.datasource.mock.MockedDataSource;
+import com.complone.hiveparser.exeption.DataSourceNotFoundException;
 import com.complone.hiveparser.type.DatabaseType;
 import com.zaxxer.hikari.HikariDataSource;
+import org.apache.commons.collections.CollectionUtils;
 
 import javax.sql.DataSource;
+import java.util.List;
+import java.util.Objects;
 
 public class DataSourceUtils {
     
-    public static DataSource build(final Class<? extends DataSource> dataSourceClass, final DatabaseType databaseType, final String databaseName) {
-        if (HikariDataSource.class == dataSourceClass) {
-            return createHikariDataSource(databaseType, databaseName);
-        }
-        if (DruidDataSource.class == dataSourceClass) {
-            return createDruidDataSource(databaseType, databaseName);
-        }
-        throw new UnsupportedOperationException(dataSourceClass.getName());
+    public static DataSource build(final Class<? extends DataSource> dataSourceClass, final DatabaseType databaseType, final String databaseName, final DatabaseConfInfo databaseConfInfo, final UserConfiguarion userConfiguarion) {
+            try {
+                return createMultiDataSource(dataSourceClass, databaseType, databaseName, databaseConfInfo, userConfiguarion);
+            }catch (UnsupportedOperationException ex){
+                throw new UnsupportedOperationException(dataSourceClass.getName());
+            }
     }
     
-    private static DruidDataSource createDruidDataSource(final DatabaseType databaseType, final String databaseName) {
+    
+    private static DataSource createMultiDataSource(final Class<? extends DataSource> dataSourceClass, final DatabaseType databaseType, final String databaseName, final DatabaseConfInfo databaseConfInfo, final UserConfiguarion userConf){
+        DynamicRoutingDataSource dynamicRoutingDataSource = new AbstractRoutingDataSource();
+        if (HikariDataSource.class ==  dataSourceClass){
+            HikariDataSourceManager hikariManager = userConf.getHikari();
+            List<HikariDataConfig> hikariDataConfigs = hikariManager.getHikariDataConfigs();
+            for (HikariDataConfig config: hikariDataConfigs){
+                HikariDataSource hikariDataSource = createHikariDataSource(databaseType,databaseName,config);
+                if (Objects.nonNull(dynamicRoutingDataSource.getDataSource(config.getId()))) {
+                    throw new DataSourceNotFoundException(404,"创建数据源失败");
+                }
+                dynamicRoutingDataSource.addDataSource(config.getId(), hikariDataSource);
+            }
+            fetchMultiDataSource(databaseConfInfo);
+            
+            return dynamicRoutingDataSource.getDataSource(databaseConfInfo.getSrcDataSource());
+        }else if (DruidDataSource.class == dataSourceClass) {
+            DruidDataSourceManager druidDataSourceManager = userConf.getDruid();
+            List<DruidDataConfig> druidDataConfigs = druidDataSourceManager.getDruidDataConfigs();
+            for (DruidDataConfig config: druidDataConfigs){
+                DruidDataSource druidDataSource = createDruidDataSource(databaseType,databaseName,config);
+                dynamicRoutingDataSource.addDataSource(config.getId(), druidDataSource);
+            }
+            fetchMultiDataSource(databaseConfInfo);
+            return dynamicRoutingDataSource.getDataSource(databaseConfInfo.getSrcDataSource());
+        }else {
+            return new MockedDataSource();
+        }
+        
+    }
+    
+    public static DataSource  fetchMultiDataSource(DatabaseConfInfo databaseConfInfo){
+        if ( databaseConfInfo.isPrimary() && CollectionUtils.isNotEmpty(databaseConfInfo.getSrcDataSourceList())) {
+            return fetchDataSyncConf(databaseConfInfo);
+        }
+        return null;
+    }
+    
+    /**
+     * 在多个数据源合并导入一个目标数据源的时候 需要解析正确库的schema格式
+     * @param databaseConfInfo
+     * @return
+     */
+    private static DataSource fetchDataSyncConf(DatabaseConfInfo databaseConfInfo){
+        return new HikariDataSource();
+    }
+    
+    private static DruidDataSource createDruidDataSource(final DatabaseType databaseType, final String databaseName, final DruidDataConfig dataSourceConfig) {
         DruidDataSource result = new DruidDataSource();
         result.setUrl(getURL(databaseType, databaseName));
-        result.setUsername("root");
-        result.setPassword("root");
-        result.setValidationQuery("SELECT 1");//用来检测连接是否有效
-        result.setTestOnBorrow(false);//借用连接时执行validationQuery检测连接是否有效，做了这个配置会降低性能
-        result.setTestOnReturn(false);//归还连接时执行validationQuery检测连接是否有效，做了这个配置会降低性能
-        //连接空闲时检测，如果连接空闲时间大于timeBetweenEvictionRunsMillis指定的毫秒，执行validationQuery指定的SQL来检测连接是否有效
-        result.setTestWhileIdle(true);//如果检测失败，则连接将被从池中去除
-        result.setTimeBetweenEvictionRunsMillis(40 * 1000L);//1分钟
-        result.setMaxActive(10);
-        result.setInitialSize(2);
+        result.setDriverClassName(getDriverClassName(databaseType));
+        result.setUsername(dataSourceConfig.getUsername());
+        result.setPassword(dataSourceConfig.getPassword());
+        result.setValidationQuery(dataSourceConfig.getValidationQuery());
+        result.setTestOnBorrow(dataSourceConfig.isTestOnBorrow());
+        result.setTestOnReturn(dataSourceConfig.isTestOnReturn());
+        result.setTestWhileIdle(dataSourceConfig.isTestWhileIdle());
+        result.setTimeBetweenEvictionRunsMillis(dataSourceConfig.getTimeBetweenEvictionRunsMillis());
+        result.setMaxActive(dataSourceConfig.getMaxActive());
+        result.setInitialSize(dataSourceConfig.getInitialSize());
         return result;
     }
     
     
-    private static HikariDataSource createHikariDataSource(final DatabaseType databaseType, final String databaseName) {
+    private static HikariDataSource createHikariDataSource(final DatabaseType databaseType, final String databaseName, final HikariDataConfig hikariDataConfig) {
         HikariDataSource result = new HikariDataSource();
         result.setJdbcUrl(getURL(databaseType, databaseName));
-        result.setUsername("root");
-        result.setPassword("root");
-        result.setMaximumPoolSize(10);
-        result.setMinimumIdle(2);
-        result.setConnectionTimeout(15 * 1000L);
-        result.setIdleTimeout(40 * 1000L);
+        result.setDriverClassName(getDriverClassName(databaseType));
+        result.setUsername(hikariDataConfig.getUsername());
+        result.setPassword(hikariDataConfig.getPassword());
+        result.setMaximumPoolSize(hikariDataConfig.getMaximumPoolSize());
+        result.setMinimumIdle(hikariDataConfig.getMinimumIdle());
+        result.setConnectionTimeout(hikariDataConfig.getConnectionTimeout());
+        result.setIdleTimeout(hikariDataConfig.getIdleTimeout());
         return result;
+    }
+    
+    public static String getDriverClassName(final DatabaseType databaseType){
+        switch (databaseType.getType()){
+            case "MySQL":
+                return "com.mysql.jdbc.Driver";
+            case "PostgreSQL":
+                return "org.postgresql.Driver";
+            case "Oracle":
+                return "oracle.jdbc.driver.OracleDriver";
+            default:
+                throw new UnsupportedOperationException(databaseType.getType());
+        }
     }
     
     private static String getURL(final DatabaseType databaseType, final String databaseName) {

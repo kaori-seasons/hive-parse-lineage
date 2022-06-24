@@ -1,0 +1,41 @@
+# ?????
+spring:
+    datasources:
+        # ???1
+        hikari:
+            type: com.alibaba.druid.pool.DruidDataSource
+            datalist:
+                datasource1:
+                    id: "ds1"
+                    driverClassName: "MySQL"
+                    url: jdbc:mysql:thin:@10.xx.xx.xx:1521:orcl
+                    username: xxx1
+                    password: xxx1
+                    maximumPoolSize: 10
+                    minimumIdle: 2
+                    connectionTimeout: 5000
+                    idleTimeout: 40000
+
+        # ???2
+        druid:
+            type: com.zaxxer.hikari.DruidDataSource
+            datalist:
+                datasource1:
+                    id: "ds2"
+                    driverClassName: "MySQL"
+                    url: jdbc:oracle:thin:@10.xx.xx.xx:1521:orcl
+                    username: xxx2
+                    password: xxx2
+                    initialSize: 5
+                    minIdle: 10
+                    maxActive: 20
+                    maxWait: 60000
+                    timeBetweenEvictionRunsMillis: 60000
+                    minEvictableIdleTimeMillis: 300000
+                    maxEvictableIdleTimeMillis: 900000
+                    validationQuery: SELECT 1 FROM DUAL
+                    testWhileIdle: true
+                    testOnBorrow: false
+                    testOnReturn: false
+
+
